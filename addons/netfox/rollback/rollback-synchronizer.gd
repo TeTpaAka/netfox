@@ -20,7 +20,7 @@ class_name RollbackSynchronizer
 @export var custom_netcode: Script:
 	set(value):
 		custom_netcode = value
-		_send_full_state = custom_netcode._send_full_state
+		_send_full_state = value._send_full_state
 
 @export_group("State")
 ## Properties that define the game state.
@@ -589,11 +589,8 @@ func _submit_inputs(serialized_inputs: Array, tick: int):
 			_inputs.set_snapshot(input_tick, input)
 			_earliest_input_tick = mini(_earliest_input_tick, input_tick)
 
-var _send_full_state = func(node: Node, serialized_state: Dictionary, tick: int, peer: int = -1):
-	if peer == -1:
-		node._submit_full_state.rpc(serialized_state, tick)
-	else:
-		node._submit_full_state.rpc_id(peer, serialized_state, tick)
+var _send_full_state = func(node: Node, serialized_state: Dictionary, tick: int, peer: int = MultiplayerPeer.TARGET_PEER_BROADCAST):
+	node._submit_full_state.rpc_id(peer, serialized_state, tick)
 
 # `serialized_state` is a serialized _PropertySnapshot
 @rpc("any_peer", "unreliable_ordered", "call_remote")

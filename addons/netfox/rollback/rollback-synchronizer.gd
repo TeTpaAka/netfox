@@ -17,6 +17,11 @@ class_name RollbackSynchronizer
 ## [member root] even if there's no current input available for the tick.
 @export var enable_prediction: bool = false
 
+@export var custom_netcode: Script:
+	set(value):
+		custom_netcode = value
+		_send_full_state = custom_netcode._send_full_state
+
 @export_group("State")
 ## Properties that define the game state.
 ## [br][br]
@@ -428,14 +433,14 @@ func _record_tick(tick: int):
 
 			if not NetworkRollback.enable_diff_states:
 				# Broadcast new full state
-				_submit_full_state.rpc(full_state.as_dictionary(), tick)
+				_send_full_state.call(self, full_state.as_dictionary(), tick)
 
 				NetworkPerformance.push_full_state_broadcast(full_state.as_dictionary())
 				NetworkPerformance.push_sent_state_broadcast(full_state.as_dictionary())
 			elif full_state_interval > 0 and tick > _next_full_state_tick:
 				# Send full state so we can send deltas from there
 				_logger.trace("Broadcasting full state for tick %d", [tick])
-				_submit_full_state.rpc(full_state.as_dictionary(), tick)
+				_send_full_state.call(self, full_state.as_dictionary(), tick)
 				_next_full_state_tick = tick + full_state_interval
 
 				NetworkPerformance.push_full_state_broadcast(full_state.as_dictionary())
@@ -446,14 +451,14 @@ func _record_tick(tick: int):
 
 					# Peer hasn't received a full state yet, can't send diffs
 					if not _ackd_state.has(peer):
-						_submit_full_state.rpc_id(peer, full_state.as_dictionary(), tick)
+						_send_full_state.call(self, full_state.as_dictionary(), tick, peer)
 						NetworkPerformance.push_sent_state(full_state.as_dictionary())
 						continue
 
 					# History doesn't have reference tick?
 					var reference_tick = _ackd_state[peer]
 					if not _states.has(reference_tick):
-						_submit_full_state.rpc_id(peer, full_state.as_dictionary(), tick)
+						_send_full_state.call(self, full_state.as_dictionary(), tick, peer)
 						NetworkPerformance.push_sent_state(full_state.as_dictionary())
 						continue
 
@@ -463,7 +468,7 @@ func _record_tick(tick: int):
 
 					if diff_state.size() == full_state.size():
 						# State is completely different, send full state
-						_submit_full_state.rpc_id(peer, full_state.as_dictionary(), tick)
+						_send_full_state.call(self, full_state.as_dictionary(), tick, peer)
 						NetworkPerformance.push_sent_state(full_state.as_dictionary())
 					else:
 						# Send only diff
@@ -584,6 +589,11 @@ func _submit_inputs(serialized_inputs: Array, tick: int):
 			_inputs.set_snapshot(input_tick, input)
 			_earliest_input_tick = mini(_earliest_input_tick, input_tick)
 
+var _send_full_state = func(node: Node, serialized_state: Dictionary, tick: int, peer: int = -1):
+	if peer == -1:
+		node._submit_full_state.rpc(serialized_state, tick)
+	else:
+		node._submit_full_state.rpc_id(peer, serialized_state, tick)
 
 # `serialized_state` is a serialized _PropertySnapshot
 @rpc("any_peer", "unreliable_ordered", "call_remote")

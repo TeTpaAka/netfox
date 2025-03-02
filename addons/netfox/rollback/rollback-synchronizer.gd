@@ -52,6 +52,11 @@ var full_state_interval: int = 24
 @export_range(0, 128, 1, "or_greater")
 var diff_ack_interval: int = 0
 
+@export
+var state_serializer: Script = preload("res://addons/netfox/rollback/state_serializer_dictionary.gd"):
+	set(value):
+		state_serializer = value
+
 @export_group("Inputs")
 ## Properties that define the input for the game simulation.
 ## [br][br]
@@ -428,14 +433,14 @@ func _record_tick(tick: int):
 
 			if not NetworkRollback.enable_diff_states:
 				# Broadcast new full state
-				_submit_full_state.rpc(full_state.as_dictionary(), tick)
+				_attempt_submit_full_state(full_state, tick)
 
 				NetworkPerformance.push_full_state_broadcast(full_state.as_dictionary())
 				NetworkPerformance.push_sent_state_broadcast(full_state.as_dictionary())
 			elif full_state_interval > 0 and tick > _next_full_state_tick:
 				# Send full state so we can send deltas from there
 				_logger.trace("Broadcasting full state for tick %d", [tick])
-				_submit_full_state.rpc(full_state.as_dictionary(), tick)
+				_attempt_submit_full_state(full_state, tick)
 				_next_full_state_tick = tick + full_state_interval
 
 				NetworkPerformance.push_full_state_broadcast(full_state.as_dictionary())
@@ -446,14 +451,14 @@ func _record_tick(tick: int):
 
 					# Peer hasn't received a full state yet, can't send diffs
 					if not _ackd_state.has(peer):
-						_submit_full_state.rpc_id(peer, full_state.as_dictionary(), tick)
+						_attempt_submit_full_state(full_state, tick, peer)
 						NetworkPerformance.push_sent_state(full_state.as_dictionary())
 						continue
 
 					# History doesn't have reference tick?
 					var reference_tick = _ackd_state[peer]
 					if not _states.has(reference_tick):
-						_submit_full_state.rpc_id(peer, full_state.as_dictionary(), tick)
+						_attempt_submit_full_state(full_state, tick, peer)
 						NetworkPerformance.push_sent_state(full_state.as_dictionary())
 						continue
 
@@ -463,7 +468,7 @@ func _record_tick(tick: int):
 
 					if diff_state.size() == full_state.size():
 						# State is completely different, send full state
-						_submit_full_state.rpc_id(peer, full_state.as_dictionary(), tick)
+						_attempt_submit_full_state(full_state, tick, peer)
 						NetworkPerformance.push_sent_state(full_state.as_dictionary())
 					else:
 						# Send only diff
@@ -584,15 +589,17 @@ func _submit_inputs(serialized_inputs: Array, tick: int):
 			_inputs.set_snapshot(input_tick, input)
 			_earliest_input_tick = mini(_earliest_input_tick, input_tick)
 
+func _attempt_submit_full_state(full_state: _PropertySnapshot, tick, peer: int = MultiplayerPeer.TARGET_PEER_BROADCAST):
+	_submit_full_state.rpc_id(peer, state_serializer.serialize_full_state(full_state, state_properties), tick)
 
 # `serialized_state` is a serialized _PropertySnapshot
 @rpc("any_peer", "unreliable_ordered", "call_remote")
-func _submit_full_state(serialized_state: Dictionary, tick: int):
+func _submit_full_state(serialized_state: PackedByteArray, tick: int):
 	if not _is_initialized:
 		# Settings not processed yet
 		return
 
-	var state := _PropertySnapshot.from_dictionary(serialized_state)
+	var state: _PropertySnapshot = state_serializer.deserialize_full_state(serialized_state, state_properties)
 
 	if tick < NetworkRollback.history_start:
 		# State too old!
